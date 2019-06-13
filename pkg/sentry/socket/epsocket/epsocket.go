@@ -51,6 +51,7 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
+	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
 
@@ -2367,9 +2368,19 @@ func (s *SocketOperations) State() uint32 {
 			// Internal or unknown state.
 			return 0
 		}
+	} else {
+		// UDP socket.
+		switch udp.EndpointState(s.Endpoint.State()) {
+		case udp.StateInitial, udp.StateBound, udp.StateClosed:
+			return linux.TCP_CLOSE
+		case udp.StateConnected:
+			return linux.TCP_ESTABLISHED
+		default:
+			return 0
+		}
 	}
 
-	// TODO(b/112063468): Export states for UDP, ICMP, and raw sockets.
+	// TODO(b/112063468): Export states for ICMP, and raw sockets.
 	return 0
 }
 
