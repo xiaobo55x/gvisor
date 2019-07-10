@@ -16,18 +16,10 @@
 
 set -xeo pipefail
 
-# This file is a temporary bridge. We will create multiple independent Kokoro
-# workflows that call each of the test scripts independently.
-cat ~kbuilder/.ssh/authorized_keys
-
-# Ensure the image is setup appropriately.
-$(dirname $0)/../tools/image_setup.sh
-
-# Run all the tests in sequence.
-$(dirname $0)/../scripts/do_tests.sh
-$(dirname $0)/../scripts/make_tests.sh
-$(dirname $0)/../scripts/root_tests.sh
-$(dirname $0)/../scripts/docker_tests.sh
-$(dirname $0)/../scripts/overlay_tests.sh
-$(dirname $0)/../scripts/hostnet_tests.sh
-$(dirname $0)/../scripts/simple_tests.sh
+# These tests do not require bazel setup.
+#
+# They are testing the Makefile wrapper around bazel support. We just build the
+# default, build runsc locally and shutdown.
+make
+make runsc
+make bazel-shutdown

@@ -14,20 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -xeo pipefail
+source $(dirname $0)/common.sh
 
-# This file is a temporary bridge. We will create multiple independent Kokoro
-# workflows that call each of the test scripts independently.
-cat ~kbuilder/.ssh/authorized_keys
+# Build runsc.
+build //runsc
 
-# Ensure the image is setup appropriately.
-$(dirname $0)/../tools/image_setup.sh
+# run runsc do without root privileges.
+run //runsc --rootless do true
+run //runsc --rootless --network=none do true
 
-# Run all the tests in sequence.
-$(dirname $0)/../scripts/do_tests.sh
-$(dirname $0)/../scripts/make_tests.sh
-$(dirname $0)/../scripts/root_tests.sh
-$(dirname $0)/../scripts/docker_tests.sh
-$(dirname $0)/../scripts/overlay_tests.sh
-$(dirname $0)/../scripts/hostnet_tests.sh
-$(dirname $0)/../scripts/simple_tests.sh
+# run runsc do with root privileges.
+run_as_root //runsc do true

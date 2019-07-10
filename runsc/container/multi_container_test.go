@@ -31,7 +31,7 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/control"
 	"gvisor.dev/gvisor/runsc/boot"
 	"gvisor.dev/gvisor/runsc/specutils"
-	"gvisor.dev/gvisor/runsc/test/testutil"
+	"gvisor.dev/gvisor/runsc/testutil"
 )
 
 func createSpecs(cmds ...[]string) ([]*specs.Spec, []string) {

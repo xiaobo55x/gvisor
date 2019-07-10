@@ -16,18 +16,8 @@
 
 set -xeo pipefail
 
-# This file is a temporary bridge. We will create multiple independent Kokoro
-# workflows that call each of the test scripts independently.
-cat ~kbuilder/.ssh/authorized_keys
-
-# Ensure the image is setup appropriately.
-$(dirname $0)/../tools/image_setup.sh
-
-# Run all the tests in sequence.
-$(dirname $0)/../scripts/do_tests.sh
-$(dirname $0)/../scripts/make_tests.sh
-$(dirname $0)/../scripts/root_tests.sh
-$(dirname $0)/../scripts/docker_tests.sh
-$(dirname $0)/../scripts/overlay_tests.sh
-$(dirname $0)/../scripts/hostnet_tests.sh
-$(dirname $0)/../scripts/simple_tests.sh
+if [[ -f $(dirname $0)/common_google.sh ]]; then
+  source $(dirname $0)/common_google.sh
+else
+  source $(dirname $0)/common_bazel.sh
+fi
