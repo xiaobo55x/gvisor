@@ -233,7 +233,7 @@ var AMD64 = &kernel.SyscallTable{
 		184: syscalls.Error("tuxcall", syserror.ENOSYS, "Not implemented in Linux.", nil),
 		185: syscalls.Error("security", syserror.ENOSYS, "Not implemented in Linux.", nil),
 		186: syscalls.Supported("gettid", Gettid),
-		187: syscalls.ErrorWithEvent("readahead", syserror.ENOSYS, "", []string{"gvisor.dev/issue/261"}), // TODO(b/29351341)
+		187: syscalls.Supported("readahead", Readahead),
 		188: syscalls.ErrorWithEvent("setxattr", syserror.ENOTSUP, "Requires filesystem support.", nil),
 		189: syscalls.ErrorWithEvent("lsetxattr", syserror.ENOTSUP, "Requires filesystem support.", nil),
 		190: syscalls.ErrorWithEvent("fsetxattr", syserror.ENOTSUP, "Requires filesystem support.", nil),
