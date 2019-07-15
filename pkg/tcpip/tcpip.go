@@ -123,6 +123,49 @@ func (e ErrSaveRejection) Error() string {
 	return "save rejected due to unsupported networking state: " + e.Err.Error()
 }
 
+// MonotonicTime presents a time value from a monotonic clock.
+//
+// While a monotonic time is internally encoded as nanoseconds since the unix
+// epoch, it is *not* a unix timestamp. An absolute point in monotonic time
+// represents an arbitrary point in real-world time and has no relation to a
+// wall clock. Do not compare MonotonicTime values to time.Time values and
+// interpreting it as a unix timestamp will not yield meaningful real-world
+// times.
+//
+// +stateify savable
+type MonotonicTime struct {
+	data time.Time `state:"(.monotonicNanos)"`
+}
+
+// NewMonotonicTime constructs a new monotonic time from components. An nsec
+// value outside the range [0,999999999] is valid and will be converted into
+// whole seconds as required.
+func NewMonotonicTime(sec, nsec int64) MonotonicTime {
+	return MonotonicTime{data: time.Unix(sec, nsec)}
+}
+
+// Nanoseconds returns the total number of nanoseconds since the monotonic time
+// epoch.
+func (t MonotonicTime) Nanoseconds() int64 {
+	return t.data.UnixNano()
+}
+
+// Sub returns the duration between this monotonic time and an earlier one.
+func (t MonotonicTime) Sub(earlier MonotonicTime) time.Duration {
+	return t.data.Sub(earlier.data)
+}
+
+// IsZero returns true if the time represented by this monotonci time is
+// equivalent to the monotonic time epoch.
+func (t MonotonicTime) IsZero() bool {
+	return t.data.UnixNano() == 0
+}
+
+// Elapsed returns the elapsed since between a monotonic time and the present.
+func (t MonotonicTime) Elapsed(c Clock) time.Duration {
+	return c.NowMonotonic().Sub(t)
+}
+
 // A Clock provides the current time.
 //
 // Times returned by a Clock should always be used for application-visible
@@ -130,10 +173,10 @@ func (e ErrSaveRejection) Error() string {
 type Clock interface {
 	// NowNanoseconds returns the current real time as a number of
 	// nanoseconds since the Unix epoch.
-	NowNanoseconds() int64
+	Now() time.Time
 
-	// NowMonotonic returns a monotonic time value.
-	NowMonotonic() int64
+	// NowMonotonicNanoseconds returns a monotonic time value in nanoseconds.
+	NowMonotonic() MonotonicTime
 }
 
 // Address is a byte slice cast as a string that represents the address of a
@@ -475,14 +518,6 @@ type QuickAckOption int
 //
 // Only supported on Unix sockets.
 type PasscredOption int
-
-// TCPInfoOption is used by GetSockOpt to expose TCP statistics.
-//
-// TODO(b/64800844): Add and populate stat fields.
-type TCPInfoOption struct {
-	RTT    time.Duration
-	RTTVar time.Duration
-}
 
 // KeepaliveEnabledOption is used by SetSockOpt/GetSockOpt to specify whether
 // TCP keepalive is enabled for this socket.

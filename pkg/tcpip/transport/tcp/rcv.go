@@ -16,7 +16,6 @@ package tcp
 
 import (
 	"container/heap"
-	"time"
 
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/seqnum"
@@ -220,37 +219,35 @@ func (r *receiver) consumeSegment(s *segment, segSeq seqnum.Value, segLen seqnum
 	return true
 }
 
-// updateRTT updates the receiver RTT measurement based on the sequence number
-// of the received segment.
-func (r *receiver) updateRTT() {
+// updateRTTLocked updates the receiver RTT measurement based on the sequence
+// number of the received segment.
+//
+// Precondition: Caller must hold r.ep.rcvListMu.
+func (r *receiver) updateRTTLocked() {
 	// From: https://public.lanl.gov/radiant/pubs/drs/sc2001-poster.pdf
 	//
 	// A system that is only transmitting acknowledgements can still
 	// estimate the round-trip time by observing the time between when a byte
 	// is first acknowledged and the receipt of data that is at least one
 	// window beyond the sequence number that was acknowledged.
-	r.ep.rcvListMu.Lock()
 	if r.ep.rcvAutoParams.rttMeasureTime.IsZero() {
 		// New measurement.
-		r.ep.rcvAutoParams.rttMeasureTime = time.Now()
+		r.ep.rcvAutoParams.rttMeasureTime = r.ep.stack.Clock.NowMonotonic()
 		r.ep.rcvAutoParams.rttMeasureSeqNumber = r.rcvNxt.Add(r.rcvWnd)
-		r.ep.rcvListMu.Unlock()
 		return
 	}
 	if r.rcvNxt.LessThan(r.ep.rcvAutoParams.rttMeasureSeqNumber) {
-		r.ep.rcvListMu.Unlock()
 		return
 	}
-	rtt := time.Since(r.ep.rcvAutoParams.rttMeasureTime)
+	rtt := r.ep.rcvAutoParams.rttMeasureTime.Elapsed(r.ep.stack.Clock)
 	// We only store the minimum observed RTT here as this is only used in
 	// absence of a SRTT available from either timestamps or a sender
 	// measurement of RTT.
 	if r.ep.rcvAutoParams.rtt == 0 || rtt < r.ep.rcvAutoParams.rtt {
 		r.ep.rcvAutoParams.rtt = rtt
 	}
-	r.ep.rcvAutoParams.rttMeasureTime = time.Now()
+	r.ep.rcvAutoParams.rttMeasureTime = r.ep.stack.Clock.NowMonotonic()
 	r.ep.rcvAutoParams.rttMeasureSeqNumber = r.rcvNxt.Add(r.rcvWnd)
-	r.ep.rcvListMu.Unlock()
 }
 
 // handleRcvdSegment handles TCP segments directed at the connection managed by
@@ -291,11 +288,18 @@ func (r *receiver) handleRcvdSegment(s *segment) {
 		return
 	}
 
-	// Since we consumed a segment update the receiver's RTT estimate
-	// if required.
-	if segLen > 0 {
-		r.updateRTT()
+	r.ep.rcvListMu.Lock()
+	now := r.ep.stack.Clock.NowMonotonic()
+	if s.flagIsSet(header.TCPFlagAck) {
+		r.ep.rcvLastAck = now
 	}
+	if segLen > 0 {
+		// Since we consumed a segment update the receiver's RTT estimate if
+		// required.
+		r.ep.rcvLastData = now
+		r.updateRTTLocked()
+	}
+	r.ep.rcvListMu.Unlock()
 
 	// By consuming the current segment, we may have filled a gap in the
 	// sequence number domain that allows pending segments to be consumed

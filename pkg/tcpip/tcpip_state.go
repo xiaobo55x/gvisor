@@ -12,4 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tcp
+package tcpip
+
+import "time"
+
+type monotonicNanos int64
+
+func (m *MonotonicTime) saveData() monotonicNanos {
+	return monotonicNanos(m.data.UnixNano())
+}
+
+func (m *MonotonicTime) loadData(nsec monotonicNanos) {
+	m.data = time.Unix(0, int64(nsec))
+}

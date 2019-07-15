@@ -60,7 +60,7 @@ type TCPProbeFunc func(s TCPEndpointState)
 type TCPCubicState struct {
 	WLastMax                float64
 	WMax                    float64
-	T                       time.Time
+	T                       tcpip.MonotonicTime
 	TimeSinceLastCongestion time.Duration
 	C                       float64
 	K                       float64
@@ -140,7 +140,7 @@ type TCPReceiverState struct {
 // a given TCP Endpoint.
 type TCPSenderState struct {
 	// LastSendTime is the time at which we sent the last segment.
-	LastSendTime time.Time
+	LastSendTime tcpip.MonotonicTime
 
 	// DupAckCount is the number of Duplicate ACK's received.
 	DupAckCount int
@@ -172,7 +172,7 @@ type TCPSenderState struct {
 	RTTMeasureSeqNum seqnum.Value
 
 	// RTTMeasureTime is the time when the RTTMeasureSeqNum was sent.
-	RTTMeasureTime time.Time
+	RTTMeasureTime tcpip.MonotonicTime
 
 	// Closed indicates that the caller has closed the endpoint for sending.
 	Closed bool
@@ -229,7 +229,7 @@ type TCPSACKInfo struct {
 type RcvBufAutoTuneParams struct {
 	// MeasureTime is the time at which the current measurement
 	// was started.
-	MeasureTime time.Time
+	MeasureTime tcpip.MonotonicTime
 
 	// CopiedBytes is the number of bytes copied to user space since
 	// this measure began.
@@ -257,7 +257,7 @@ type RcvBufAutoTuneParams struct {
 
 	// RTTMeasureTime is the absolute time at which the current RTT
 	// measurement period began.
-	RTTMeasureTime time.Time
+	RTTMeasureTime tcpip.MonotonicTime
 
 	// Disabled is true if an explicit receive buffer is set for the
 	// endpoint.
@@ -268,6 +268,14 @@ type RcvBufAutoTuneParams struct {
 type TCPEndpointState struct {
 	// ID is a copy of the TransportEndpointID for the endpoint.
 	ID TCPEndpointID
+
+	// ProtocolState denotes the TCP state the endpoint is currently
+	// in, encoded in a netstack-specific manner. Should be translated
+	// to the Linux ABI before exposing to userspace.
+	ProtocolState uint32
+
+	// AMSS is the MSS advertised to the peer by this endpoint.
+	AMSS uint16
 
 	// SegTime denotes the absolute time when this segment was received.
 	SegTime time.Time
@@ -285,6 +293,18 @@ type TCPEndpointState struct {
 
 	// RcvClosed if true, indicates the endpoint has been closed for reading.
 	RcvClosed bool
+
+	// RcvLastAck is the time of reciept of the last packet with the
+	// ACK flag set.
+	RcvLastAck tcpip.MonotonicTime
+
+	// RcvLastData is the time of reciept of the last packet
+	// containing data.
+	RcvLastData tcpip.MonotonicTime
+
+	// RcvMSS is the size of the largest segment the receiver is willing to
+	// accept, not including TCP headers and options.
+	RcvMSS int
 
 	// SendTSOk is used to indicate when the TS Option has been negotiated.
 	// When sendTSOk is true every non-RST segment should carry a TS as per
@@ -326,6 +346,9 @@ type TCPEndpointState struct {
 	// SndMTU is the smallest MTU seen in the control packets received.
 	SndMTU int
 
+	// MaxOptionSize is the maximum size of TCP options.
+	MaxOptionSize int
+
 	// Receiver holds variables related to the TCP receiver for the endpoint.
 	Receiver TCPReceiverState
 
@@ -352,6 +375,9 @@ type Stack struct {
 	// Stack creation and is immutable.
 	raw bool
 
+	// clock is used to generate user-visible times.
+	Clock tcpip.Clock
+
 	mu         sync.RWMutex
 	nics       map[tcpip.NICID]*NIC
 	forwarding bool
@@ -366,9 +392,6 @@ type Stack struct {
 	// If not nil, then any new endpoints will have this probe function
 	// invoked everytime they receive a TCP segment.
 	tcpProbeFunc TCPProbeFunc
-
-	// clock is used to generate user-visible times.
-	clock tcpip.Clock
 
 	// handleLocal allows non-loopback interfaces to loop packets.
 	handleLocal bool
@@ -413,7 +436,7 @@ func New(network []string, transport []string, opts Options) *Stack {
 		nics:               make(map[tcpip.NICID]*NIC),
 		linkAddrCache:      newLinkAddrCache(ageLimit, resolutionTimeout, resolutionAttempts),
 		PortManager:        ports.NewPortManager(),
-		clock:              clock,
+		Clock:              clock,
 		stats:              opts.Stats.FillIn(),
 		handleLocal:        opts.HandleLocal,
 		raw:                opts.Raw,
@@ -518,11 +541,6 @@ func (s *Stack) SetTransportProtocolHandler(p tcpip.TransportProtocolNumber, h f
 	if state != nil {
 		state.defaultHandler = h
 	}
-}
-
-// NowNanoseconds implements tcpip.Clock.NowNanoseconds.
-func (s *Stack) NowNanoseconds() int64 {
-	return s.clock.NowNanoseconds()
 }
 
 // Stats returns a mutable copy of the current stats.

@@ -6,6 +6,7 @@ go_library(
     name = "tcpip",
     srcs = [
         "tcpip.go",
+        "tcpip_state.go",
         "time_unsafe.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/tcpip",

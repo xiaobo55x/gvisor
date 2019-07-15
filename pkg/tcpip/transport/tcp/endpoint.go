@@ -108,6 +108,9 @@ func (s EndpointState) String() string {
 	}
 }
 
+// InfoOption is used by GetSockOpt to expose TCP endpoint state.
+type InfoOption stack.TCPEndpointState
+
 // Reasons for notifying the protocol goroutine.
 const (
 	notifyNonZeroReceiveWindow = 1 << iota
@@ -140,7 +143,7 @@ type SACKInfo struct {
 type rcvBufAutoTuneParams struct {
 	// measureTime is the time at which the current measurement
 	// was started.
-	measureTime time.Time `state:".(unixTime)"`
+	measureTime tcpip.MonotonicTime
 
 	// copied is the number of bytes copied out of the receive
 	// buffers since this measure began.
@@ -162,7 +165,7 @@ type rcvBufAutoTuneParams struct {
 
 	// rttMeasureTime is the absolute time at which the current rtt
 	// measurement period began.
-	rttMeasureTime time.Time `state:".(unixTime)"`
+	rttMeasureTime tcpip.MonotonicTime
 
 	// disabled is true if an explicit receive buffer is set for the
 	// endpoint.
@@ -208,6 +211,8 @@ type endpoint struct {
 	rcvBufSize    int
 	rcvBufUsed    int
 	rcvAutoParams rcvBufAutoTuneParams
+	rcvLastAck    tcpip.MonotonicTime
+	rcvLastData   tcpip.MonotonicTime
 	// zeroWindow indicates that the window was closed due to receive buffer
 	// space being filled up. This is set by the worker goroutine before
 	// moving a segment to the rcvList. This setting is cleared by the
@@ -628,7 +633,7 @@ func (e *endpoint) ModerateRecvBuf(copied int) {
 		e.rcvListMu.Unlock()
 		return
 	}
-	now := time.Now()
+	now := e.stack.Clock.NowMonotonic()
 	if rtt := e.rcvAutoParams.rtt; rtt == 0 || now.Sub(e.rcvAutoParams.measureTime) < rtt {
 		e.rcvAutoParams.copied += copied
 		e.rcvListMu.Unlock()
@@ -786,7 +791,7 @@ func (e *endpoint) Write(p tcpip.Payload, opts tcpip.WriteOptions) (uintptr, <-c
 	}
 
 	l := len(v)
-	s := newSegmentFromView(&e.route, e.id, v)
+	s := newSegmentFromView(e.stack.Clock, &e.route, e.id, v)
 
 	// Add data to the send queue.
 	e.sndBufUsed += l
@@ -1198,17 +1203,10 @@ func (e *endpoint) GetSockOpt(opt interface{}) *tcpip.Error {
 		}
 		return nil
 
-	case *tcpip.TCPInfoOption:
-		*o = tcpip.TCPInfoOption{}
-		e.mu.RLock()
-		snd := e.snd
-		e.mu.RUnlock()
-		if snd != nil {
-			snd.rtt.Lock()
-			o.RTT = snd.rtt.srtt
-			o.RTTVar = snd.rtt.rttvar
-			snd.rtt.Unlock()
-		}
+	case *InfoOption:
+		e.workMu.Lock()
+		*o = InfoOption(e.completeState())
+		e.workMu.Unlock()
 		return nil
 
 	case *tcpip.KeepaliveEnabledOption:
@@ -1496,7 +1494,7 @@ func (e *endpoint) Shutdown(flags tcpip.ShutdownFlags) *tcpip.Error {
 			}
 
 			// Queue fin segment.
-			s := newSegmentFromView(&e.route, e.id, nil)
+			s := newSegmentFromView(e.stack.Clock, &e.route, e.id, nil)
 			e.sndQueue.PushBack(s)
 			e.sndBufInQueue++
 
@@ -1712,7 +1710,7 @@ func (e *endpoint) GetRemoteAddress() (tcpip.FullAddress, *tcpip.Error) {
 // HandlePacket is called by the stack when new packets arrive to this transport
 // endpoint.
 func (e *endpoint) HandlePacket(r *stack.Route, id stack.TransportEndpointID, vv buffer.VectorisedView) {
-	s := newSegment(r, id, vv)
+	s := newSegment(e.stack.Clock, r, id, vv)
 	if !s.parse() {
 		e.stack.Stats().MalformedRcvdPackets.Increment()
 		e.stack.Stats().TCP.InvalidSegmentsReceived.Increment()
@@ -1931,22 +1929,27 @@ func (e *endpoint) maxOptionSize() (size int) {
 }
 
 // completeState makes a full copy of the endpoint and returns it. This is used
-// before invoking the probe. The state returned may not be fully consistent if
-// there are intervening syscalls when the state is being copied.
+// before invoking the probe and for getsockopt(TCP_INFO). The state returned
+// may not be fully consistent if there are intervening syscalls when the state
+// is being copied.
 func (e *endpoint) completeState() stack.TCPEndpointState {
 	var s stack.TCPEndpointState
-	s.SegTime = time.Now()
+	s.SegTime = e.stack.Clock.Now()
 
-	// Copy EndpointID.
-	e.mu.Lock()
+	e.mu.RLock()
 	s.ID = stack.TCPEndpointID(e.id)
-	e.mu.Unlock()
+	s.ProtocolState = uint32(e.state)
+	s.AMSS = e.amss
+	s.RcvMSS = int(e.amss) - e.maxOptionSize()
+	e.mu.RUnlock()
 
 	// Copy endpoint rcv state.
 	e.rcvListMu.Lock()
 	s.RcvBufSize = e.rcvBufSize
 	s.RcvBufUsed = e.rcvBufUsed
 	s.RcvClosed = e.rcvClosed
+	s.RcvLastAck = e.rcvLastAck
+	s.RcvLastData = e.rcvLastData
 	s.RcvAutoParams.MeasureTime = e.rcvAutoParams.measureTime
 	s.RcvAutoParams.CopiedBytes = e.rcvAutoParams.copied
 	s.RcvAutoParams.PrevCopiedBytes = e.rcvAutoParams.prevCopied
@@ -1954,6 +1957,7 @@ func (e *endpoint) completeState() stack.TCPEndpointState {
 	s.RcvAutoParams.RTTMeasureSeqNumber = e.rcvAutoParams.rttMeasureSeqNumber
 	s.RcvAutoParams.RTTMeasureTime = e.rcvAutoParams.rttMeasureTime
 	s.RcvAutoParams.Disabled = e.rcvAutoParams.disabled
+
 	e.rcvListMu.Unlock()
 
 	// Endpoint TCP Option state.
@@ -2013,6 +2017,7 @@ func (e *endpoint) completeState() stack.TCPEndpointState {
 	}
 	e.snd.rtt.Lock()
 	s.Sender.SRTT = e.snd.rtt.srtt
+	s.Sender.RTTVar = e.snd.rtt.rttvar
 	s.Sender.SRTTInited = e.snd.rtt.srttInited
 	e.snd.rtt.Unlock()
 
@@ -2021,7 +2026,7 @@ func (e *endpoint) completeState() stack.TCPEndpointState {
 			WMax:                    cubic.wMax,
 			WLastMax:                cubic.wLastMax,
 			T:                       cubic.t,
-			TimeSinceLastCongestion: time.Since(cubic.t),
+			TimeSinceLastCongestion: cubic.t.Elapsed(e.stack.Clock),
 			C:                       cubic.c,
 			K:                       cubic.k,
 			Beta:                    cubic.beta,
@@ -2057,8 +2062,8 @@ func (e *endpoint) initGSO() {
 // State implements tcpip.Endpoint.State. It exports the endpoint's protocol
 // state for diagnostics.
 func (e *endpoint) State() uint32 {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 	return uint32(e.state)
 }
 
