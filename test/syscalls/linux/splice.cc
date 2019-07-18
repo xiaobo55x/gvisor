@@ -19,6 +19,8 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/clock.h"
+#include "absl/time/time.h"
 #include "test/util/file_descriptor.h"
 #include "test/util/temp_path.h"
 #include "test/util/test_util.h"
@@ -296,13 +298,18 @@ TEST(SpliceTest, TwoPipes) {
   EXPECT_EQ(memcmp(rbuf.data(), buf.data(), kPageSize), 0);
 }
 
-TEST(SpliceTest, Blocking) {
+class BlockingSpliceTest
+    : public ::testing::TestWithParam<std::pair<int, int>> {};
+
+TEST_P(BlockingSpliceTest, BlockingRead) {
+  auto param = GetParam();
+
   // Create two new pipes.
   int first[2], second[2];
-  ASSERT_THAT(pipe(first), SyscallSucceeds());
+  ASSERT_THAT(pipe2(first, param.first), SyscallSucceeds());
   const FileDescriptor rfd1(first[0]);
   const FileDescriptor wfd1(first[1]);
-  ASSERT_THAT(pipe(second), SyscallSucceeds());
+  ASSERT_THAT(pipe2(second, param.second), SyscallSucceeds());
   const FileDescriptor rfd2(second[0]);
   const FileDescriptor wfd2(second[1]);
 
@@ -310,6 +317,7 @@ TEST(SpliceTest, Blocking) {
   std::vector<char> buf(kPageSize);
   RandomizeBuffer(buf.data(), buf.size());
   ScopedThread t([&]() {
+    absl::SleepFor(absl::Milliseconds(100));
     ASSERT_THAT(write(wfd1.get(), buf.data(), buf.size()),
                 SyscallSucceedsWithValue(kPageSize));
   });
@@ -328,15 +336,75 @@ TEST(SpliceTest, Blocking) {
   EXPECT_EQ(memcmp(rbuf.data(), buf.data(), kPageSize), 0);
 }
 
-TEST(TeeTest, Blocking) {
+TEST_P(BlockingSpliceTest, BlockingWrite) {
+  // FIXME(gvisor.dev/issue/565): Splice will lose data if the write fails.
   SKIP_IF(IsRunningOnGvisor());
+
+  auto param = GetParam();
 
   // Create two new pipes.
   int first[2], second[2];
-  ASSERT_THAT(pipe(first), SyscallSucceeds());
+  ASSERT_THAT(pipe2(first, param.first), SyscallSucceeds());
   const FileDescriptor rfd1(first[0]);
   const FileDescriptor wfd1(first[1]);
-  ASSERT_THAT(pipe(second), SyscallSucceeds());
+  ASSERT_THAT(pipe2(second, param.second), SyscallSucceeds());
+  const FileDescriptor rfd2(second[0]);
+  const FileDescriptor wfd2(second[1]);
+
+  // Make some data available to be read.
+  std::vector<char> buf1(kPageSize - 1);
+  RandomizeBuffer(buf1.data(), buf1.size());
+  ASSERT_THAT(write(wfd1.get(), buf1.data(), buf1.size()),
+              SyscallSucceedsWithValue(kPageSize - 1));
+
+  // Fill up the write pipe's buffer.
+  int pipe_size = -1;
+  ASSERT_THAT(pipe_size = fcntl(wfd2.get(), F_GETPIPE_SZ), SyscallSucceeds());
+  std::vector<char> buf2(pipe_size);
+  ASSERT_THAT(write(wfd2.get(), buf2.data(), buf2.size()),
+              SyscallSucceedsWithValue(pipe_size));
+
+  ScopedThread t([&]() {
+    absl::SleepFor(absl::Milliseconds(100));
+    ASSERT_THAT(read(rfd2.get(), buf2.data(), buf2.size()),
+                SyscallSucceedsWithValue(pipe_size));
+  });
+
+  // Attempt a splice immediately; it should block.
+  EXPECT_THAT(
+      splice(rfd1.get(), nullptr, wfd2.get(), nullptr, kPageSize - 1, 0),
+      SyscallSucceedsWithValue(kPageSize - 1));
+
+  // Thread should be joinable.
+  t.Join();
+
+  // Content should reflect the splice.
+  std::vector<char> rbuf(kPageSize - 1);
+  ASSERT_THAT(read(rfd2.get(), rbuf.data(), rbuf.size()),
+              SyscallSucceedsWithValue(kPageSize - 1));
+  EXPECT_EQ(memcmp(rbuf.data(), buf1.data(), kPageSize - 1), 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(TestBlockingSplice, BlockingSpliceTest,
+                         ::testing::Values(std::pair<int, int>(0, 0),
+                                           std::pair<int, int>(O_NONBLOCK, 0),
+                                           std::pair<int, int>(0, O_NONBLOCK),
+                                           std::pair<int, int>(O_NONBLOCK,
+                                                               O_NONBLOCK)));
+
+class BlockingTeeTest : public ::testing::TestWithParam<std::pair<int, int>> {};
+
+TEST_P(BlockingTeeTest, BlockingRead) {
+  SKIP_IF(IsRunningOnGvisor());
+
+  auto param = GetParam();
+
+  // Create two new pipes.
+  int first[2], second[2];
+  ASSERT_THAT(pipe2(first, param.first), SyscallSucceeds());
+  const FileDescriptor rfd1(first[0]);
+  const FileDescriptor wfd1(first[1]);
+  ASSERT_THAT(pipe2(second, param.second), SyscallSucceeds());
   const FileDescriptor rfd2(second[0]);
   const FileDescriptor wfd2(second[1]);
 
@@ -344,6 +412,7 @@ TEST(TeeTest, Blocking) {
   std::vector<char> buf(kPageSize);
   RandomizeBuffer(buf.data(), buf.size());
   ScopedThread t([&]() {
+    absl::SleepFor(absl::Milliseconds(100));
     ASSERT_THAT(write(wfd1.get(), buf.data(), buf.size()),
                 SyscallSucceedsWithValue(kPageSize));
   });
@@ -355,7 +424,7 @@ TEST(TeeTest, Blocking) {
   // Thread should be joinable.
   t.Join();
 
-  // Content should reflect the splice, in both pipes.
+  // Content should reflect the tee, in both pipes.
   std::vector<char> rbuf(kPageSize);
   ASSERT_THAT(read(rfd2.get(), rbuf.data(), rbuf.size()),
               SyscallSucceedsWithValue(kPageSize));
@@ -364,6 +433,60 @@ TEST(TeeTest, Blocking) {
               SyscallSucceedsWithValue(kPageSize));
   EXPECT_EQ(memcmp(rbuf.data(), buf.data(), kPageSize), 0);
 }
+
+TEST_P(BlockingTeeTest, BlockingWrite) {
+  SKIP_IF(IsRunningOnGvisor());
+
+  auto param = GetParam();
+
+  // Create two new pipes.
+  int first[2], second[2];
+  ASSERT_THAT(pipe2(first, param.first), SyscallSucceeds());
+  const FileDescriptor rfd1(first[0]);
+  const FileDescriptor wfd1(first[1]);
+  ASSERT_THAT(pipe2(second, param.second), SyscallSucceeds());
+  const FileDescriptor rfd2(second[0]);
+  const FileDescriptor wfd2(second[1]);
+
+  // Make some data available to be read.
+  std::vector<char> buf1(kPageSize);
+  RandomizeBuffer(buf1.data(), buf1.size());
+  ASSERT_THAT(write(wfd1.get(), buf1.data(), buf1.size()),
+              SyscallSucceedsWithValue(kPageSize));
+
+  // Fill up the write pipe's buffer.
+  int pipe_size = -1;
+  ASSERT_THAT(pipe_size = fcntl(wfd2.get(), F_GETPIPE_SZ), SyscallSucceeds());
+  std::vector<char> buf2(pipe_size);
+  ASSERT_THAT(write(wfd2.get(), buf2.data(), buf2.size()),
+              SyscallSucceedsWithValue(pipe_size));
+
+  ScopedThread t([&]() {
+    absl::SleepFor(absl::Milliseconds(100));
+    ASSERT_THAT(read(rfd2.get(), buf2.data(), buf2.size()),
+                SyscallSucceedsWithValue(pipe_size));
+  });
+
+  // Attempt a tee immediately; it should block.
+  EXPECT_THAT(tee(rfd1.get(), wfd2.get(), kPageSize, 0),
+              SyscallSucceedsWithValue(kPageSize));
+
+  // Thread should be joinable.
+  t.Join();
+
+  // Content should reflect the tee.
+  std::vector<char> rbuf(kPageSize);
+  ASSERT_THAT(read(rfd2.get(), rbuf.data(), rbuf.size()),
+              SyscallSucceedsWithValue(kPageSize));
+  EXPECT_EQ(memcmp(rbuf.data(), buf1.data(), kPageSize), 0);
+}
+
+INSTANTIATE_TEST_SUITE_P(TestBlockingTee, BlockingTeeTest,
+                         ::testing::Values(std::pair<int, int>(0, 0),
+                                           std::pair<int, int>(O_NONBLOCK, 0),
+                                           std::pair<int, int>(0, O_NONBLOCK),
+                                           std::pair<int, int>(O_NONBLOCK,
+                                                               O_NONBLOCK)));
 
 TEST(SpliceTest, NonBlocking) {
   // Create two new pipes.
