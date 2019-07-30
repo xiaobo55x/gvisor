@@ -165,6 +165,10 @@ func (e *endpoint) loadState(state EndpointState) {
 
 // afterLoad is invoked by stateify.
 func (e *endpoint) afterLoad() {
+	tcpip.RecordLoadedEndpoint(e)
+}
+
+func (e *endpoint) ResumeWorkers() {
 	e.stack = stack.StackFromEnv
 	e.segmentQueue.setLimit(MaxUnprocessedSegments)
 	e.workMu.Init()

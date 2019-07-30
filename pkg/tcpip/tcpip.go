@@ -403,6 +403,12 @@ type Endpoint interface {
 	//
 	// NOTE: This method is a no-op for sockets other than TCP.
 	ModerateRecvBuf(copied int)
+
+	// ResumeWorkers restarts protocol goroutines for an endpoint after it has
+	// been restored. This must be called after all indirect dependencies of the
+	// endpoint has been restored -- typically near the end of the restore
+	// process.
+	ResumeWorkers()
 }
 
 // WriteOptions contains options for Endpoint.Write.
@@ -475,14 +481,6 @@ type QuickAckOption int
 //
 // Only supported on Unix sockets.
 type PasscredOption int
-
-// TCPInfoOption is used by GetSockOpt to expose TCP statistics.
-//
-// TODO(b/64800844): Add and populate stat fields.
-type TCPInfoOption struct {
-	RTT    time.Duration
-	RTTVar time.Duration
-}
 
 // KeepaliveEnabledOption is used by SetSockOpt/GetSockOpt to specify whether
 // TCP keepalive is enabled for this socket.
@@ -1078,11 +1076,13 @@ type ProtocolAddress struct {
 	AddressWithPrefix AddressWithPrefix
 }
 
-// danglingEndpointsMu protects access to danglingEndpoints.
-var danglingEndpointsMu sync.Mutex
+var (
+	// danglingEndpointsMu protects access to danglingEndpoints.
+	danglingEndpointsMu sync.Mutex
 
-// danglingEndpoints tracks all dangling endpoints no longer owned by the app.
-var danglingEndpoints = make(map[Endpoint]struct{})
+	// danglingEndpoints tracks all dangling endpoints no longer owned by the app.
+	danglingEndpoints = make(map[Endpoint]struct{})
+)
 
 // GetDanglingEndpoints returns all dangling endpoints.
 func GetDanglingEndpoints() []Endpoint {
@@ -1112,3 +1112,30 @@ func DeleteDanglingEndpoint(e Endpoint) {
 // AsyncLoading is the global barrier for asynchronous endpoint loading
 // activities.
 var AsyncLoading sync.WaitGroup
+
+// loadedEndpoints is a list of endpoints that have been loaded during Restore
+// whose protocol goroutines need to be resumed.
+var (
+	loadedEndpointsMu sync.Mutex
+	loadedEndpoints   []Endpoint
+)
+
+// RecordLoadedEndpoint adds e to the global list of endpoints which need their
+// protocol goroutines to be resumed.
+func RecordLoadedEndpoint(e Endpoint) {
+	loadedEndpointsMu.Lock()
+	loadedEndpoints = append(loadedEndpoints, e)
+	loadedEndpointsMu.Unlock()
+}
+
+// ResumeEndpoints restarts worker goroutines for endpoints after they've been
+// restore. This must be called after everything else in the system has been
+// restored.
+func ResumeEndpoints() {
+	loadedEndpointsMu.Lock()
+	defer loadedEndpointsMu.Unlock()
+	for _, e := range loadedEndpoints {
+		e.ResumeWorkers()
+	}
+	loadedEndpoints = nil
+}

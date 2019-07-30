@@ -501,7 +501,7 @@ func (ts *TaskSet) unregisterEpollWaiters() {
 }
 
 // LoadFrom returns a new Kernel loaded from args.
-func (k *Kernel) LoadFrom(r io.Reader, net inet.Stack) error {
+func (k *Kernel) LoadFrom(r io.Reader, net inet.Stack, clocks sentrytime.Clocks) error {
 	loadStart := time.Now()
 
 	k.networkStack = net
@@ -545,6 +545,9 @@ func (k *Kernel) LoadFrom(r io.Reader, net inet.Stack) error {
 
 	log.Infof("Overall load took [%s]", time.Since(loadStart))
 
+	k.Timekeeper().SetClocks(clocks)
+	tcpip.ResumeEndpoints()
+
 	// Ensure that all pending asynchronous work is complete:
 	//   - namedpipe opening
 	//   - inode file opening
@@ -554,7 +557,7 @@ func (k *Kernel) LoadFrom(r io.Reader, net inet.Stack) error {
 
 	tcpip.AsyncLoading.Wait()
 
-	log.Infof("Overall load took [%s]", time.Since(loadStart))
+	log.Infof("Overall load took [%s] after async work", time.Since(loadStart))
 
 	// Applications may size per-cpu structures based on k.applicationCores, so
 	// it can't change across save/restore. When we are virtualizing CPU

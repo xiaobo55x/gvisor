@@ -63,6 +63,11 @@ func (ep *endpoint) loadRcvBufSizeMax(max int) {
 
 // afterLoad is invoked by stateify.
 func (ep *endpoint) afterLoad() {
+	tcpip.RecordLoadedEndpoint(ep)
+}
+
+// ResumeWorkers implements tcpip.Endpoint.ResumeWorkers.
+func (ep *endpoint) ResumeWorkers() {
 	// StackFromEnv is a stack used specifically for save/restore.
 	ep.stack = stack.StackFromEnv
 
