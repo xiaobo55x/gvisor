@@ -51,5 +51,8 @@ func (f *inlineFile) ReadAt(dst []byte, off int64) (int, error) {
 	}
 
 	n := copy(dst, f.regFile.inode.diskInode.Data()[off:to])
+	if n < len(dst) {
+		return n, io.EOF
+	}
 	return n, nil
 }

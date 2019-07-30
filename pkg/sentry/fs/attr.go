@@ -111,6 +111,28 @@ func (n InodeType) LinuxType() uint32 {
 	}
 }
 
+// ToInodeType coverts a linux file type to InodeType.
+func ToInodeType(linuxFileType linux.FileMode) InodeType {
+	switch linuxFileType {
+	case linux.ModeRegular:
+		return RegularFile
+	case linux.ModeDirectory:
+		return Directory
+	case linux.ModeSymlink:
+		return Symlink
+	case linux.ModeNamedPipe:
+		return Pipe
+	case linux.ModeCharacterDevice:
+		return CharacterDevice
+	case linux.ModeBlockDevice:
+		return BlockDevice
+	case linux.ModeSocket:
+		return Socket
+	default:
+		panic(fmt.Sprintf("unknown file mode: %d", linuxFileType))
+	}
+}
+
 // StableAttr contains Inode attributes that will be stable throughout the
 // lifetime of the Inode.
 //

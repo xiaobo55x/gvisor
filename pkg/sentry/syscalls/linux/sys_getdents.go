@@ -120,7 +120,7 @@ func newDirent(width uint, name string, attr fs.DentAttr, offset uint64) *dirent
 				Ino: attr.InodeID,
 				Off: offset,
 			},
-			Typ: toType(attr.Type),
+			Typ: ToDirentType(attr.Type),
 		},
 		Name: []byte(name),
 	}
@@ -142,8 +142,8 @@ func smallestDirent64(a arch.Context) uint {
 	return uint(binary.Size(d.Hdr)) + a.Width()
 }
 
-// toType converts an fs.InodeOperationsInfo to a linux dirent typ field.
-func toType(nodeType fs.InodeType) uint8 {
+// ToDirentType converts an fs.InodeType to a linux dirent type field.
+func ToDirentType(nodeType fs.InodeType) uint8 {
 	switch nodeType {
 	case fs.RegularFile, fs.SpecialFile:
 		return linux.DT_REG
