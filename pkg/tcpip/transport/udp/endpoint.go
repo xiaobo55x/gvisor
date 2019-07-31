@@ -744,7 +744,7 @@ func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
 	if err != nil {
 		return err
 	}
-	if addr.Addr == "" {
+	if addr.FamilyUnspec {
 		return e.disconnect()
 	}
 	if addr.Port == 0 {

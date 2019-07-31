@@ -1293,7 +1293,7 @@ func (e *endpoint) checkV4Mapped(addr *tcpip.FullAddress) (tcpip.NetworkProtocol
 
 // Connect connects the endpoint to its peer.
 func (e *endpoint) Connect(addr tcpip.FullAddress) *tcpip.Error {
-	if addr.Addr == "" && addr.Port == 0 {
+	if addr.FamilyUnspec {
 		// AF_UNSPEC isn't supported.
 		return tcpip.ErrAddressFamilyNotSupported
 	}

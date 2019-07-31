@@ -424,13 +424,16 @@ TEST_P(UdpSocketTest, ConnectAny) {
       }
     }
 
+    // TODO(b/138658473): GVisor doesn't allow to connect to the zero port.
+    if (IsRunningOnGvisor()) {
+      ASSERT_THAT(connect(s_, reinterpret_cast<sockaddr*>(&baddr), addrlen),
+                  SyscallFailsWithErrno(EINVAL));
+      return;
+    }
+
     ASSERT_THAT(connect(s_, reinterpret_cast<sockaddr*>(&baddr), addrlen),
                 SyscallSucceeds());
   }
-
-  // TODO(b/138658473): gVisor doesn't return the correct local address after
-  // connecting to the any address.
-  SKIP_IF(IsRunningOnGvisor());
 
   // Postcondition check.
   {

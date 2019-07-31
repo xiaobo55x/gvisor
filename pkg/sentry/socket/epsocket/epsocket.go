@@ -352,7 +352,9 @@ func GetAddress(sfamily int, addr []byte, strict bool) (tcpip.FullAddress, *syse
 		return out, nil
 
 	case linux.AF_UNSPEC:
-		return tcpip.FullAddress{}, nil
+		return tcpip.FullAddress{
+			FamilyUnspec: true,
+		}, nil
 
 	default:
 		return tcpip.FullAddress{}, syserr.ErrAddressFamilyNotSupported

@@ -249,6 +249,9 @@ type FullAddress struct {
 	//
 	// This may not be used by all endpoint types.
 	Port uint16
+
+	// FamilyUnspec indicates whether the address family has been specified or not.
+	FamilyUnspec bool
 }
 
 // Payload provides an interface around data that is being sent to an endpoint.
