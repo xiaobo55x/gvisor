@@ -22,8 +22,10 @@ import (
 	"gvisor.dev/gvisor/runsc/test/testutil"
 )
 
-func TestNodeJS(t *testing.T) {
-	const img = "gcr.io/gvisor-proctor/nodejs"
+func testLang(t *testing.T, lang string) {
+	t.Helper()
+
+	img := "gcr.io/gvisor-proctor/" + lang // TODO(b/136503277): Change path to reflect real image registry
 	if err := testutil.Pull(img); err != nil {
 		t.Fatalf("docker pull failed: %v", err)
 	}
@@ -49,7 +51,7 @@ func TestNodeJS(t *testing.T) {
 			}
 			defer d.CleanUp()
 
-			status, err := d.Wait(60 * time.Second)
+			status, err := d.Wait(180 * time.Second)
 			if err != nil {
 				t.Fatalf("docker test %q failed to wait: %v", tc, err)
 			}
