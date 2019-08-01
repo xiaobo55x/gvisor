@@ -1323,13 +1323,9 @@ func (d *Dirent) TryIncRef() bool {
 // DecRef implements RefCounter.DecRef with destructor d.destroy.
 func (d *Dirent) DecRef() {
 	if d.Inode != nil {
-		// Keep mount around, since DecRef may destroy d.Inode.
-		msrc := d.Inode.MountSource
-		d.DecRefWithDestructor(d.destroy)
-		msrc.DecDirentRefs()
-	} else {
-		d.DecRefWithDestructor(d.destroy)
+		d.Inode.MountSource.DecDirentRefs()
 	}
+	d.DecRefWithDestructor(d.destroy)
 }
 
 // InotifyEvent notifies all watches on the inode for this dirent and its parent
