@@ -183,7 +183,8 @@ func TestAddrRangeSeqTakeFirst(t *testing.T) {
 		{0x60, 0x60},
 		{0x70, 0x77},
 	}
-	ars := AddrRangeSeqFromSlice(ranges).TakeFirst(5)
+	origArs := AddrRangeSeqFromSlice(ranges)
+	ars := origArs.TakeFirst(5)
 	want := []AddrRange{
 		{0x10, 0x11}, // +1 byte (total 1 byte), not truncated
 		{0x20, 0x22}, // +2 bytes (total 3 bytes), not truncated
@@ -194,4 +195,5 @@ func TestAddrRangeSeqTakeFirst(t *testing.T) {
 		{0x70, 0x70}, // +0 bytes (total 5 bytes), fully truncated
 	}
 	testAddrRangeSeqEqualityWithTailIteration(t, ars, want)
+	testAddrRangeSeqEqualityWithTailIteration(t, origArs, ranges)
 }

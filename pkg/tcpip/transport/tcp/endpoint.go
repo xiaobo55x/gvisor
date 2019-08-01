@@ -747,20 +747,22 @@ func (e *endpoint) Write(p tcpip.Payload, opts tcpip.WriteOptions) (uintptr, <-c
 	// and opts.EndOfRecord are also ignored.
 
 	e.mu.RLock()
-	defer e.mu.RUnlock()
 
 	// The endpoint cannot be written to if it's not connected.
 	if !e.state.connected() {
 		switch e.state {
 		case StateError:
+			e.mu.RUnlock()
 			return 0, nil, e.hardError
 		default:
+			e.mu.RUnlock()
 			return 0, nil, tcpip.ErrClosedForSend
 		}
 	}
 
 	// Nothing to do if the buffer is empty.
 	if p.Size() == 0 {
+		e.mu.RUnlock()
 		return 0, nil, nil
 	}
 
@@ -769,26 +771,33 @@ func (e *endpoint) Write(p tcpip.Payload, opts tcpip.WriteOptions) (uintptr, <-c
 	// Check if the connection has already been closed for sends.
 	if e.sndClosed {
 		e.sndBufMu.Unlock()
+		e.mu.RUnlock()
 		return 0, nil, tcpip.ErrClosedForSend
 	}
 
 	// Check against the limit.
 	avail := e.sndBufSize - e.sndBufUsed
+	e.sndBufMu.Unlock()
+	e.mu.RUnlock()
 	if avail <= 0 {
-		e.sndBufMu.Unlock()
 		return 0, nil, tcpip.ErrWouldBlock
 	}
 
+	// Copy in memory without holding sndBufMu so that worker goroutine can
+	// make progress independent of this operation.
 	v, perr := p.Get(avail)
 	if perr != nil {
-		e.sndBufMu.Unlock()
 		return 0, nil, perr
 	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
 
 	l := len(v)
 	s := newSegmentFromView(&e.route, e.id, v)
 
 	// Add data to the send queue.
+	e.sndBufMu.Lock()
 	e.sndBufUsed += l
 	e.sndBufInQueue += seqnum.Size(l)
 	e.sndQueue.PushBack(s)
