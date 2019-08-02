@@ -1137,8 +1137,14 @@ func (c *Container) adjustOOMScoreAdj(conf *boot.Config) error {
 	scoreFound := false
 	for _, container := range containers {
 		if container.Spec.Process.OOMScoreAdj != nil && (!scoreFound || *container.Spec.Process.OOMScoreAdj < lowScore) {
-			scoreFound = true
-			lowScore = *container.Spec.Process.OOMScoreAdj
+			// Special multi-container support for CRI. Ignore the root
+			// container when calculating oom_score_adj for the sandbox because
+			// it is the infrastructure (pause) container and always has a very
+			// low oom_score_adj.
+			if !isRoot(container) {
+				scoreFound = true
+				lowScore = *container.Spec.Process.OOMScoreAdj
+			}
 		}
 	}
 
